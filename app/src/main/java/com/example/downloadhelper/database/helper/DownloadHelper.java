@@ -57,6 +57,14 @@ public class DownloadHelper {
         return entity;
     }
 
+    public DownloadEntity queryBySavePath(String savePath){
+        DownloadEntity entity = null;
+        locker.lock(0);
+        entity = SQLite.select().from(DownloadEntity.class).where(DownloadEntity_Table.savePath.is(savePath)).querySingle();
+        locker.unlock();
+        return entity;
+    }
+
     public List<DownloadEntity> queryALL(){
         List<DownloadEntity> list = null;
         locker.lock(0);

@@ -41,10 +41,10 @@ public class FileUtil {
             return "";
         }
     }
-    // 在文件名和扩展名之间添加序号的方法
+    // 在文件名和扩展名之间添加序号的方法(也有可能是没有拓展名的）
     public static String addSerialNumber(String filePath, String fileName, int number) {
         String extension = getFileExtension(fileName);
-        //Log.i(TAG, "addSerialNumber: fileName="+fileName);
+        Log.i(TAG, "addSerialNumber: fileName="+fileName);
         // 判断文件名是否已经包含序号
         int index = fileName.lastIndexOf("(");
         String newFileName = null;
@@ -61,11 +61,21 @@ public class FileUtil {
             } catch (NumberFormatException e) {
                 // 序号解析失败，不进行任何操作
             }
-            // 构建新的文件名
-            newFileName = fileName.substring(0, fileName.lastIndexOf("(") + 1) + number + ")" + extension;
+            if (TextUtils.isEmpty(extension)){
+                newFileName = fileName.substring(0, fileName.lastIndexOf("(") + 1) + number + ")";
+            }else{
+                // 构建新的文件名
+                newFileName = fileName.substring(0, fileName.lastIndexOf("(") + 1) + number + ")" + extension;
+            }
+
         }else{
-            //第一次重复
-            newFileName = fileName.substring(0, fileName.lastIndexOf("."))+"(1)"+extension;
+            if (TextUtils.isEmpty(extension)){
+                newFileName = fileName+"(1)";
+            }else{
+                //第一次重复
+                newFileName = fileName.substring(0, fileName.lastIndexOf("."))+"(1)"+extension;
+            }
+
 
         }
         // 根据新的文件名构建新的文件路径

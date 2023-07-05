@@ -4,11 +4,14 @@ import static android.app.Activity.RESULT_OK;
 import static com.example.downloadhelper.constant.DownloadConst.CANCEL;
 import static com.example.downloadhelper.constant.DownloadConst.FINISH;
 import static com.example.downloadhelper.constant.DownloadConst.NONE;
+import static com.example.downloadhelper.constant.DownloadConst.PAUSE;
+import static com.example.downloadhelper.constant.DownloadConst.PROGRESS;
 import static com.example.downloadhelper.constant.DownloadConst.START;
 import static com.example.downloadhelper.constant.DownloadType.HTTP_URL_CONNECTION;
 import static com.example.downloadhelper.constant.DownloadType.OK_HTTP;
 import static com.example.downloadhelper.constant.DownloadType.RETROFIT;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
@@ -23,6 +26,7 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentActivity;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
@@ -36,24 +40,32 @@ import com.example.downloadhelper.database.entity.DownloadEntity;
 import com.example.downloadhelper.database.helper.DownloadHelper;
 import com.example.downloadhelper.databinding.FragmentDownloadBinding;
 import com.example.downloadhelper.databinding.LayoutTabNavBinding;
+import com.example.downloadhelper.listener.OnDownClickListener;
 import com.example.downloadhelper.listener.OnFinishClickListener;
 import com.example.downloadhelper.listener.OnHandleClickListener;
+import com.example.downloadhelper.listener.UpperDownloadCallback;
 import com.example.downloadhelper.uis.BaseFragment;
 import com.example.downloadhelper.uis.PlayerActivity;
 import com.example.downloadhelper.util.common.ClickUtil;
+import com.example.downloadhelper.util.common.DateUtil;
 import com.example.downloadhelper.util.common.FileUtil;
 import com.example.downloadhelper.util.common.GsonUtil;
 import com.example.downloadhelper.util.down.DownloadManager;
+import com.example.downloadhelper.util.down.DownloadProgressHandler;
+import com.example.downloadhelper.viewmodel.DownloadViewModel;
 import com.example.downloadhelper.widget.SelectPopup;
 import com.google.gson.Gson;
 import com.huawei.hms.hmsscankit.ScanUtil;
 import com.huawei.hms.ml.scan.HmsScan;
 import com.huawei.hms.ml.scan.HmsScanAnalyzerOptions;
 
+import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedList;
+import java.util.Map;
 
-public class DownloadFragment extends BaseFragment implements OnHandleClickListener, OnFinishClickListener {
+public class DownloadFragment extends BaseFragment implements OnHandleClickListener, OnFinishClickListener, UpperDownloadCallback, OnDownClickListener {
 
     private static final String TAG = "DownloadFragment";
     public static final int REQUEST_CODE_SCAN = 0x110;
@@ -71,11 +83,19 @@ public class DownloadFragment extends BaseFragment implements OnHandleClickListe
     private int selectType=-1;
     private View.OnClickListener downloadClickListener;
     private DownInfoDlg downInfoDlg;
+    private Activity mActivity;
+    private DownloadViewModel mDownModel;
+    private long lastUpdateTime = 0;
+    private DownloadEntity download;
+    private DownloadEntity downEntity;
+    private long lastProgressTime = 0;
+
 
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         mContext = getContext();
+        mActivity = getActivity();
         mBinding = FragmentDownloadBinding.inflate(inflater, container, false);
        // mBinding = FragmentDownloadBinding.inflate(inflater);
         mTabBinding = LayoutTabNavBinding.bind(mBinding.getRoot());
@@ -93,6 +113,7 @@ public class DownloadFragment extends BaseFragment implements OnHandleClickListe
         mFinishedList = (ArrayList<DownloadEntity>) mHelper.queryByStatus(FINISH);
         mDownAdap = new DownloadAdapter(mContext, mDownedList);
         mFinishAdap = new FinishAdapter(mContext, mFinishedList);
+
     }
 
     @Override
@@ -122,7 +143,8 @@ public class DownloadFragment extends BaseFragment implements OnHandleClickListe
         LinearLayoutManager downLLM = new LinearLayoutManager(mContext, RecyclerView.VERTICAL, false);
         mBinding.rvList.setLayoutManager(downLLM);
         mBinding.rvList.setAdapter(mDownAdap);
-        mDownAdap.setOnHandleClickListener(this);
+       // mDownAdap.setOnHandleClickListener(this);
+        mDownAdap.setOnDownClickListener(this);
         LinearLayoutManager finishLLM = new LinearLayoutManager(mContext, RecyclerView.VERTICAL, false);
         mBinding.rvFinishList.setLayoutManager(finishLLM);
         mBinding.rvFinishList.setAdapter(mFinishAdap);
@@ -180,11 +202,17 @@ public class DownloadFragment extends BaseFragment implements OnHandleClickListe
                         entity.setFileName(fileName);
                         entity.setSavePath(savePath);
                         entity.setDownloadType(selectType);
+                        entity.setStartTime(DateUtil.getNowDateTimeFormat());
                         mHelper.save(entity);
                         mBinding.etDownLink.setText("");
+                        //mDownModel.startDownload(selectType,url,savePath);
+                        initDownload(entity);
+                        DownloadMgr.getInstance().start(entity);
                         updateDownList();
                     }
                 }
+
+
             });
 
             /*DownloadEntity entity = new DownloadEntity();
@@ -218,6 +246,50 @@ public class DownloadFragment extends BaseFragment implements OnHandleClickListe
 //        mBinding.vpList.setCurrentItem(i);
     }*/
 
+    private void initDownload(DownloadEntity entity) {
+        for (DownloadEntity downloadEntity : mDownedList) {
+            if (downloadEntity.getId() == entity.getId()){
+                downEntity = downloadEntity;
+                break;
+            }
+        }
+        DownloadViewModel downloadViewModel = new DownloadViewModel(mActivity);
+        downloadViewModel.initData();
+        /*downloadViewModel.setOnUpperDownloadCallback(new UpperDownloadCallback() {
+            private long totalSize;
+            private long currentSize;
+            private long lastProgressTime;
+            @Override
+            public void onProgress(long currentSize, long totalSize, String filePath) {
+                if (TextUtils.equals(downEntity.getSavePath(),filePath)) {
+                    //Log.i(TAG, "onProgress: this.currentSize="+this.currentSize);
+                    if (this.currentSize != currentSize && System.currentTimeMillis()-lastProgressTime>=100){
+                        downEntity.setStatus(PROGRESS);
+                        downEntity.setDownloadedBytes(currentSize);
+                        Log.i(TAG, "onProgress11: currentSize="+currentSize+",id="+downEntity.id);
+                        downEntity.setTotalBytes(totalSize);
+                        if (getActivity() != null) {
+                            getActivity().runOnUiThread(()->{
+                                 mDownAdap.setDataList(mDownedList);  //刷新
+                                //mDownAdap.notifyItemChanged(mDownedList.indexOf(entity), entity);
+                            });
+                        }
+                        lastProgressTime = System.currentTimeMillis();
+                    }
+                    this.currentSize = currentSize;
+                    this.totalSize = totalSize;
+                }
+            }
+
+            @Override
+            public void onResult(int downStatus, String filePath) {
+                updateDownList();
+            }
+        });*/
+        downloadViewModel.setOnUpperDownloadCallback(this);
+        DownloadMgr.getInstance().addData(entity,downloadViewModel);
+    }
+
     private void changePager(int position) {
         switch (position){
             case 0:
@@ -238,11 +310,34 @@ public class DownloadFragment extends BaseFragment implements OnHandleClickListe
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+        if (mDownedList != null) {
+            for (DownloadEntity downloadEntity : mDownedList) {
+                DownloadEntity entity = mHelper.queryBySavePath(downloadEntity.getSavePath());
+                initDownload(entity);
+            }
+            DownloadMgr.getInstance().resumeAll(mDownedList);
+        }
+
+    }
+
+    @Override
     public void onDestroyView() {
-        super.onDestroyView();
+        Log.i(TAG, "onDestroyView: destroy-->");
         mBinding = null;
-        DownloadManager.getInstance(mContext).destroy(mDownedList);
-        //如果是直接关闭应用则没有走这个方法。
+        //DownloadManager.getInstance(mContext).destroy(mDownedList);
+        //销毁前保存
+        for (DownloadEntity downloadEntity : mDownedList) {
+            DownloadEntity entity = mHelper.queryById(downloadEntity.getId());
+            if (downloadEntity.getStatus()==PROGRESS){
+                entity.setStatus(PROGRESS);
+                mHelper.save(entity);
+            }
+        }
+        DownloadMgr.getInstance().destroyAll(mDownedList);
+        //如果是直接关闭应用要有走这个方法需要在super之前
+        super.onDestroyView();
     }
 
 
@@ -283,9 +378,15 @@ public class DownloadFragment extends BaseFragment implements OnHandleClickListe
     }
 
     private void updateDownList() {
-        mDownedList = (ArrayList<DownloadEntity>) mHelper.queryByNotStatus(FINISH);
-        DownloadManager.getInstance(mContext).save(mDownedList);
-        mDownAdap.setDataList(mDownedList);
+        if (getActivity()!=null){
+            getActivity().runOnUiThread(()->{
+                mDownedList = (ArrayList<DownloadEntity>) mHelper.queryByNotStatus(FINISH);
+                //DownloadManager.getInstance(mContext).save(mDownedList);
+                mDownAdap.setDataList(mDownedList);
+            });
+        }
+
+
 
         /*getActivity().runOnUiThread(new Runnable() {
             @Override
@@ -293,7 +394,9 @@ public class DownloadFragment extends BaseFragment implements OnHandleClickListe
                 mDownAdap.setDataList(mDownedList);
             }
         });*/
-
+        /*for (DownloadEntity entity : mDownedList) {
+            downloadEntityMap.put(entity.getSavePath(),entity);
+        }*/
     }
 
     @Override
@@ -334,5 +437,84 @@ public class DownloadFragment extends BaseFragment implements OnHandleClickListe
                 }
             }
         }
+    }
+
+    @Override
+    public void onProgress(long currentSize, long totalSize, String filePath) {
+        for (DownloadEntity entity : mDownedList) {
+            if (TextUtils.equals(entity.getSavePath(),filePath)) {
+                if (entity.getDownloadedBytes() != currentSize && System.currentTimeMillis()-lastProgressTime>=100){
+                    entity.setStatus(PROGRESS);
+                    entity.setDownloadedBytes(currentSize);
+                    Log.i(TAG, "onProgress: currentSize="+currentSize+",id="+entity.id);
+                    entity.setTotalBytes(totalSize);
+                    if (getActivity() != null) {
+                        getActivity().runOnUiThread(()->{
+                           // mDownAdap.setDataList(mDownedList);  //刷新
+                            mDownAdap.notifyItemChanged(mDownedList.indexOf(entity), entity);
+                        });
+                    }
+                    lastProgressTime = System.currentTimeMillis();
+                }
+                break;
+            }
+        }
+
+    }
+
+    @Override
+    public void onResult(int downStatus, String filePath) {
+        updateDownList();
+    }
+
+    @Override
+    public void onItemStop(int position, DownloadEntity entity) {
+        //mDownModel.stopDownload(entity.getDownloadType());
+        DownloadMgr.getInstance().stop(entity);
+        entity.setStatus(PAUSE);
+        //Log.i(TAG, "onItemStop: entity.downed="+entity.getDownloadedBytes()+",id="+entity.getId());
+        mHelper.save(entity);
+        updateDownList();
+        /*if (getActivity() != null) {
+            getActivity().runOnUiThread(()->{
+               // mDownAdap.setDataList(mDownedList);  //刷新
+                mDownAdap.notifyItemChanged(mDownedList.indexOf(entity), entity);
+            });
+        }*/
+    }
+
+    @Override
+    public void onItemStart(int position, DownloadEntity entity) {
+        //mDownModel.startDownload(entity.getDownloadType(),entity.getUrl(),entity.getSavePath());
+        DownloadMgr.getInstance().start(entity);
+        entity.setStatus(PROGRESS);
+        mHelper.save(entity);
+        updateDownList();
+        /*if (getActivity() != null) {
+            getActivity().runOnUiThread(()->{
+                //mDownAdap.setDataList(mDownedList);  //刷新
+                mDownAdap.notifyItemChanged(mDownedList.indexOf(entity), entity);
+            });
+        }*/
+    }
+
+    @Override
+    public void onItemDelete(int position, DownloadEntity entity) {
+        //mDownModel.stopDownload(entity.getDownloadType());
+        DownloadMgr.getInstance().stop(entity);
+        DownloadMgr.getInstance().removeData(entity);
+        String savePath = entity.getSavePath();
+        mHelper.delete(entity);
+        if (new File(savePath).exists()){
+            new File(savePath).delete();
+        }
+       updateDownList();
+        /*if (getActivity() != null) {
+            getActivity().runOnUiThread(()->{
+                mDownedList.remove(entity);
+                mDownAdap.setDataList(mDownedList);  //刷新
+            });
+        }*/
+
     }
 }
